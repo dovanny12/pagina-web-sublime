@@ -9,8 +9,8 @@ from models import db, User, Product, Order
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_sublime'
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SHARED_DB_PATH = os.path.abspath(os.path.join(BASE_DIR, '..', 'Sublime', 'BD', 'database.db'))
-SHARED_SQL_PATH = os.path.abspath(os.path.join(BASE_DIR, '..', 'Sublime', 'BD', 'database.sql'))
+SHARED_DB_PATH = os.path.abspath(os.path.join(BASE_DIR, 'Sublime', 'BD', 'database.db'))
+SHARED_SQL_PATH = os.path.abspath(os.path.join(BASE_DIR, 'Sublime', 'BD', 'database.sql'))
 
 # Cache para la tasa BCV
 BCV_RATE_CACHE = {'rate': 40.0, 'updated': 0}
@@ -41,15 +41,10 @@ os.makedirs(os.path.dirname(SHARED_DB_PATH), exist_ok=True)
 
 
 def ensure_shared_db():
-    # Debug: print paths
-    print('SHARED_DB_PATH:', SHARED_DB_PATH)
-    print('SHARED_SQL_PATH:', SHARED_SQL_PATH)
-    # Ensure the directory for the database exists
+    # Crear la DB si no existe y siempre aplicar el schema SQL
     os.makedirs(os.path.dirname(SHARED_DB_PATH), exist_ok=True)
-    # Connect to the database (creates file if it does not exist)
     conn = sqlite3.connect(SHARED_DB_PATH)
     conn.execute('PRAGMA foreign_keys = ON')
-    # Execute the schema script if it exists; CREATE TABLE IF NOT EXISTS protects existing tables
     if os.path.exists(SHARED_SQL_PATH):
         with open(SHARED_SQL_PATH, 'r', encoding='utf-8') as f:
             conn.executescript(f.read())

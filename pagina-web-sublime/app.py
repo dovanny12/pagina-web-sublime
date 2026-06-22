@@ -42,22 +42,14 @@ os.makedirs(os.path.dirname(SHARED_DB_PATH), exist_ok=True)
 
 
 def ensure_shared_db():
-    if not os.path.exists(SHARED_DB_PATH):
-        # Si existe el archivo SQL, usarlo para crear la DB compartida
-        if os.path.exists(SHARED_SQL_PATH):
-            conn = sqlite3.connect(SHARED_DB_PATH)
-            conn.execute('PRAGMA foreign_keys = ON')
-            with open(SHARED_SQL_PATH, 'r', encoding='utf-8') as f:
-                conn.executescript(f.read())
-            conn.commit()
-            conn.close()
-        else:
-            # Si no hay script SQL disponible, crear un archivo de base de datos vacío
-            # y dejaremos que SQLAlchemy cree las tablas más adelante.
-            conn = sqlite3.connect(SHARED_DB_PATH)
-            conn.execute('PRAGMA foreign_keys = ON')
-            conn.commit()
-            conn.close()
+    # Crear la DB si no existe y siempre aplicar el schema SQL
+    conn = sqlite3.connect(SHARED_DB_PATH)
+    conn.execute('PRAGMA foreign_keys = ON')
+    if os.path.exists(SHARED_SQL_PATH):
+        with open(SHARED_SQL_PATH, 'r', encoding='utf-8') as f:
+            conn.executescript(f.read())
+    conn.commit()
+    conn.close()
 
 
 def get_shared_db():

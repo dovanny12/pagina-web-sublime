@@ -1085,6 +1085,16 @@ if total == 0:
     conn.commit()
 
 conn.close()
+
+@app.route('/newsletter', methods=['POST'])
+def newsletter():
+    email = request.form.get('email', '').strip()
+    if email:
+        flash('¡Gracias por suscribirte!', 'success')
+    else:
+        flash('Ingresa un correo válido.', 'error')
+    return redirect(request.referrer or url_for('home'))
+
 @app.route('/')
 def home():
     trending = fetch_products(sort_option='newest', limit=8)

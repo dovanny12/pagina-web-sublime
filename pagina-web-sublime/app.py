@@ -897,6 +897,7 @@ def api_create_product():
     precio = data.get('precio')
     stock = data.get('stock', 0)
     descripcion = data.get('descripcion', '')
+    imagen = data.get('imagen', '')
 
     if not nombre or not categoria or precio is None:
         return jsonify({'message': 'Nombre, categoría y precio son requeridos.'}), 400
@@ -915,6 +916,8 @@ def api_create_product():
     )
     product_id = product_cursor.lastrowid
     conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
+    if imagen:
+        conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, imagen))
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto creado correctamente.', 'id_producto': product_id}), 201
@@ -927,6 +930,7 @@ def api_update_product(product_id):
     precio = data.get('precio')
     stock = data.get('stock')
     descripcion = data.get('descripcion', '')
+    imagen = data.get('imagen', '')
 
     if not nombre or not categoria or precio is None or stock is None:
         return jsonify({'message': 'Nombre, categoría, precio y stock son requeridos.'}), 400
@@ -946,6 +950,12 @@ def api_update_product(product_id):
         conn.execute('UPDATE inventario SET stock_actual = ? WHERE id_producto = ?', (stock, product_id))
     else:
         conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
+    if imagen:
+        existing_img = conn.execute('SELECT id_imagen FROM imagenes_productos WHERE id_producto = ? LIMIT 1', (product_id,)).fetchone()
+        if existing_img:
+            conn.execute('UPDATE imagenes_productos SET ruta_imagen = ? WHERE id_producto = ?', (imagen, product_id))
+        else:
+            conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, imagen))
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto actualizado correctamente.'})

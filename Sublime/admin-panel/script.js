@@ -1307,6 +1307,7 @@ if (productForm) {
         const precio = Number(document.getElementById('productPrice').value);
         const stock = Number(document.getElementById('productStock').value);
         const descripcion = document.getElementById('productDescription').value;
+        const imagen = document.getElementById('productImagen').value;
 
         if (!nombre || !categoria || isNaN(precio) || isNaN(stock)) {
             showToast('Completa nombre, categoría, precio y stock.', 'error');
@@ -1321,7 +1322,8 @@ if (productForm) {
                     categoria,
                     precio,
                     stock,
-                    descripcion
+                    descripcion,
+                    imagen
                 }
             });
 
@@ -1616,7 +1618,8 @@ document
                 categoria: document.getElementById('editCategoria').value,
                 precio: Number(document.getElementById('editPrecio').value),
                 stock: Number(document.getElementById('editStock').value),
-                descripcion: document.getElementById('editDescripcion').value
+                descripcion: document.getElementById('editDescripcion').value,
+                imagen: document.getElementById('editImagen').value
             }
         });
 

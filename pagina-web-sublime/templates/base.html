@@ -79,9 +79,9 @@
                 </h3>
                 <p>Arte wearable que rompe límites.</p>
                 <div style="display: flex; gap: 15px; margin-top: 20px; font-size: 1.5rem;">
-                    <a href="#" style="color: var(--text-muted);"><i class="fa-brands fa-instagram"></i></a>
-                    <a href="#" style="color: var(--text-muted);"><i class="fa-brands fa-facebook"></i></a>
-                    <a href="#" style="color: var(--text-muted);"><i class="fa-brands fa-tiktok"></i></a>
+                    <a href="https://www.instagram.com/sublime.ve/" target="_blank" style="color: var(--text-muted);"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="https://www.facebook.com/sublime.ve/" target="_blank" style="color: var(--text-muted);"><i class="fa-brands fa-facebook"></i></a>
+                    <a href="https://www.tiktok.com/@sublime.ve" target="_blank" style="color: var(--text-muted);"><i class="fa-brands fa-tiktok"></i></a>
                 </div>
             </div>
             <div>
@@ -99,8 +99,10 @@
             </div>
             <div>
                 <h3>Boletín</h3>
-                <input type="email" placeholder="Correo electrónico" class="newsletter-input">
-                <button class="newsletter-btn">SUSCRIBIRSE</button>
+                <form action="{{ url_for('newsletter') }}" method="POST" style="display: flex; flex-direction: column; gap: 10px;">
+                    <input type="email" name="email" placeholder="Correo electrónico" class="newsletter-input" required style="width: 100%;">
+                    <button type="submit" class="newsletter-btn" style="width: 100%;">SUSCRIBIRSE</button>
+                </form>
             </div>
         </div>
         <div class="copyright">

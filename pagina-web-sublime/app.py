@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import uuid
 import sqlite3
 import urllib.request
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_from_directory
@@ -42,22 +43,14 @@ os.makedirs(os.path.dirname(SHARED_DB_PATH), exist_ok=True)
 
 
 def ensure_shared_db():
-    if not os.path.exists(SHARED_DB_PATH):
-        # Si existe el archivo SQL, usarlo para crear la DB compartida
-        if os.path.exists(SHARED_SQL_PATH):
-            conn = sqlite3.connect(SHARED_DB_PATH)
-            conn.execute('PRAGMA foreign_keys = ON')
-            with open(SHARED_SQL_PATH, 'r', encoding='utf-8') as f:
-                conn.executescript(f.read())
-            conn.commit()
-            conn.close()
-        else:
-            # Si no hay script SQL disponible, crear un archivo de base de datos vacío
-            # y dejaremos que SQLAlchemy cree las tablas más adelante.
-            conn = sqlite3.connect(SHARED_DB_PATH)
-            conn.execute('PRAGMA foreign_keys = ON')
-            conn.commit()
-            conn.close()
+    # Crear la DB si no existe y siempre aplicar el schema SQL
+    conn = sqlite3.connect(SHARED_DB_PATH)
+    conn.execute('PRAGMA foreign_keys = ON')
+    if os.path.exists(SHARED_SQL_PATH):
+        with open(SHARED_SQL_PATH, 'r', encoding='utf-8') as f:
+            conn.executescript(f.read())
+    conn.commit()
+    conn.close()
 
 
 def get_shared_db():
@@ -115,6 +108,24 @@ def seed_default_admin():
         conn.close()
 
 
+CATEGORIES = ['camisas', 'tazas', 'gorras', 'llaveros', 'termos/filtros', 'mousepads', 'bolígrafos']
+
+
+def validate_stock(conn, product_id, quantity=1):
+    if not product_id:
+        return True, None
+    row = conn.execute(
+        'SELECT IFNULL(stock_actual, 0) AS stock FROM inventario WHERE id_producto = ?',
+        (product_id,)
+    ).fetchone()
+    stock = row['stock'] if row else 0
+    if stock < quantity:
+        name_row = conn.execute('SELECT nombre FROM productos WHERE id_producto = ?', (product_id,)).fetchone()
+        name = name_row['nombre'] if name_row else 'Producto'
+        return False, f'"{name}" no tiene stock suficiente. Disponible: {stock}'
+    return True, None
+
+
 def placeholder():
     return '?'
 
@@ -126,7 +137,8 @@ def map_product_row(row):
         'category': row['categoria'] or 'General',
         'price': float(row['precio_venta']),
         'image_url': row['ruta_imagen'] or 'placeholder.png',
-        'description': row['descripcion'] or ''
+        'description': row['descripcion'] or '',
+        'stock': row['stock'] if 'stock' in row else 0
     }
 
 
@@ -175,9 +187,11 @@ def fetch_product_by_id(product_id):
     conn = get_shared_db()
     row = conn.execute(
         'SELECT p.id_producto, p.nombre, p.descripcion, p.precio_venta, c.nombre AS categoria, '
-        'COALESCE((SELECT ruta_imagen FROM imagenes_productos ip WHERE ip.id_producto = p.id_producto ORDER BY ip.id_imagen LIMIT 1), ?) AS ruta_imagen '
+        'COALESCE((SELECT ruta_imagen FROM imagenes_productos ip WHERE ip.id_producto = p.id_producto ORDER BY ip.id_imagen LIMIT 1), ?) AS ruta_imagen, '
+        'IFNULL(i.stock_actual, 0) AS stock '
         'FROM productos p '
         'LEFT JOIN categorias c ON p.id_categoria = c.id_categoria '
+        'LEFT JOIN inventario i ON i.id_producto = p.id_producto '
         'WHERE p.activo = 1 AND p.id_producto = ? ',
         ['placeholder.png', product_id]
     ).fetchone()
@@ -445,10 +459,21 @@ def api_products():
 
 @app.route('/api/product/<int:product_id>', methods=['GET'])
 def api_product(product_id):
-    producto = fetch_product_by_id(product_id)
-    if not producto:
-        return jsonify({'mensaje': 'Producto no encontrado.'}), 404
-    return jsonify({'producto': producto})
+    conn = get_shared_db()
+    product = conn.execute(
+        'SELECT p.id_producto, p.nombre, p.descripcion, p.precio_venta AS precio, '
+        'c.nombre AS categoria, IFNULL(i.stock_actual, 0) AS stock, '
+        'COALESCE((SELECT ruta_imagen FROM imagenes_productos WHERE id_producto = p.id_producto LIMIT 1), \'\') AS imagen '
+        'FROM productos p '
+        'LEFT JOIN categorias c ON p.id_categoria = c.id_categoria '
+        'LEFT JOIN inventario i ON i.id_producto = p.id_producto '
+        'WHERE p.id_producto = ?',
+        (product_id,)
+    ).fetchone()
+    conn.close()
+    if not product:
+        return jsonify({'message': 'Producto no encontrado.'}), 404
+    return jsonify({'product': dict(product)})
 
 
 def get_cliente_id_by_session():
@@ -664,6 +689,12 @@ def api_add_to_cart():
     if not p:
         return jsonify({'mensaje': 'Producto no encontrado.'}), 404
 
+    conn = get_shared_db()
+    valid, msg = validate_stock(conn, product_id, quantity)
+    conn.close()
+    if not valid:
+        return jsonify({'mensaje': msg}), 400
+
     cart = load_cart_from_db() if 'user_id' in session else session.get('cart', [])
     if not isinstance(cart, list):
         cart = []
@@ -715,6 +746,17 @@ def api_checkout():
 
     conn = get_shared_db()
     ensure_order_statuses(conn)
+
+    # Validar stock antes de continuar
+    for item in cart_items:
+        product_id = item.get('id')
+        if product_id and product_id != 0:
+            cantidad = max(1, int(item.get('quantity', 1)))
+            valid, msg = validate_stock(conn, product_id, cantidad)
+            if not valid:
+                conn.close()
+                return jsonify({'mensaje': msg}), 400
+
     cliente_id = get_or_create_client(conn, user_email, user_name, address)
     status = conn.execute('SELECT id_estado FROM estados_pedido WHERE nombre = ? LIMIT 1', ('Pendiente',)).fetchone()
     status_id = status['id_estado'] if status else 1
@@ -741,6 +783,24 @@ def api_checkout():
         'INSERT INTO envios (id_pedido, direccion_envio, empresa_envio, numero_guia, estado_envio, fecha_envio, metodo_pago, referencia_pago, tipo_envio) VALUES (?, ?, ?, ?, ?, datetime("now"), ?, ?, ?)',
         (pedido_id, address, 'Pendiente', '', 'Pendiente', payment_method or 'Pendiente', reference or '', 'destino')
     )
+
+    # También crear registro en ventas / detalle_ventas para que aparezca en Facturas del admin
+    venta_cursor = conn.execute(
+        'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+        (cliente_id, total)
+    )
+    venta_id = venta_cursor.lastrowid
+    for item in cart_items:
+        product_id = item.get('id')
+        if not product_id or product_id == 0:
+            product_id = get_or_create_custom_product(conn)
+        cantidad = max(1, int(item.get('quantity', 1)))
+        precio_unitario = float(item.get('price', 0))
+        conn.execute(
+            'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (venta_id, product_id, cantidad, precio_unitario)
+        )
+
     conn.commit()
     conn.close()
 
@@ -751,6 +811,81 @@ def api_checkout():
         session.modified = True
 
     return jsonify({'mensaje': 'Checkout completado correctamente.', 'order_id': pedido_id, 'total': total}), 201
+
+
+# ADMIN PANEL - CARRITO POR CLIENTE
+@app.route('/api/admin/cart/<int:cliente_id>', methods=['GET'])
+def admin_get_cart(cliente_id):
+    conn = get_shared_db()
+    carrito_id = get_or_create_cart(conn, cliente_id)
+    items = conn.execute(
+        'SELECT dc.id_detalle, dc.id_producto, dc.cantidad, dc.precio_unitario, p.nombre AS name '
+        'FROM detalle_carrito dc '
+        'LEFT JOIN productos p ON dc.id_producto = p.id_producto '
+        'WHERE dc.id_carrito = ? ORDER BY dc.id_detalle ASC',
+        (carrito_id,)
+    ).fetchall()
+    conn.close()
+    cart = [{
+        'id': item['id_producto'],
+        'name': item['name'] or 'Producto personalizado',
+        'price': float(item['precio_unitario']),
+        'quantity': item['cantidad']
+    } for item in items]
+    return jsonify({'cart': cart})
+
+
+@app.route('/api/admin/cart/<int:cliente_id>', methods=['POST'])
+def admin_save_cart(cliente_id):
+    data = request.get_json() or {}
+    items = data.get('items', [])
+    conn = get_shared_db()
+    carrito_id = get_or_create_cart(conn, cliente_id)
+    conn.execute('DELETE FROM detalle_carrito WHERE id_carrito = ?', (carrito_id,))
+    for item in items:
+        conn.execute(
+            'INSERT INTO detalle_carrito (id_carrito, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (carrito_id, item.get('id'), item.get('quantity', 1), item.get('price', 0))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Carrito actualizado correctamente.'})
+
+
+@app.route('/api/admin/invoice/create', methods=['POST'])
+def admin_create_invoice():
+    data = request.get_json() or {}
+    cliente_id = data.get('cliente_id')
+    items = data.get('items', [])
+
+    if not cliente_id or not items:
+        return jsonify({'message': 'Cliente y artículos son requeridos.'}), 400
+
+    conn = get_shared_db()
+
+    for item in items:
+        pid = item.get('id')
+        if pid:
+            qty = int(item.get('quantity', 1))
+            valid, msg = validate_stock(conn, pid, qty)
+            if not valid:
+                conn.close()
+                return jsonify({'message': msg}), 400
+
+    total = sum(float(item.get('price', 0)) * int(item.get('quantity', 1)) for item in items)
+    cursor = conn.execute(
+        'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+        (cliente_id, total)
+    )
+    venta_id = cursor.lastrowid
+    for item in items:
+        conn.execute(
+            'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (venta_id, item.get('id'), item.get('quantity', 1), item.get('price', 0))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Factura creada correctamente.', 'invoice_id': venta_id}), 201
 
 
 # ADMIN PANEL STATIC FILES Y ENDPOINTS
@@ -872,6 +1007,38 @@ def api_invoice_detail(invoice_id):
     invoice['detalles'] = [dict(row) for row in detalles]
     return jsonify(invoice)
 
+
+@app.route('/api/report', methods=['POST'])
+def api_report():
+    data = request.get_json() or {}
+    date_from = data.get('date_from', '')
+    date_to = data.get('date_to', '')
+
+    where = ''
+    params = []
+    if date_from and date_to:
+        where = 'WHERE v.fecha >= ? AND v.fecha <= ?'
+        params = [date_from, date_to + ' 23:59:59']
+
+    conn = get_shared_db()
+    invoices = conn.execute(
+        f'SELECT v.id_venta AS id, c.nombre AS cliente, v.fecha, COUNT(d.id_detalle) AS items, IFNULL(v.total, 0) AS total '
+        f'FROM ventas v LEFT JOIN clientes c ON v.id_cliente = c.id_cliente '
+        f'LEFT JOIN detalle_ventas d ON d.id_venta = v.id_venta '
+        f'{where} '
+        f'GROUP BY v.id_venta ORDER BY v.fecha DESC',
+        params
+    ).fetchall()
+
+    gran_total = sum(row['total'] for row in invoices)
+    conn.close()
+    return jsonify({
+        'invoices': [dict(row) for row in invoices],
+        'gran_total': gran_total,
+        'count': len(invoices)
+    })
+
+
 @app.route('/api/sales-data', methods=['GET'])
 def api_sales_data():
     conn = get_shared_db()
@@ -888,12 +1055,11 @@ def api_sales_data():
 
 @app.route('/api/product', methods=['POST'])
 def api_create_product():
-    data = request.get_json() or {}
-    nombre = data.get('nombre')
-    categoria = data.get('categoria')
-    precio = data.get('precio')
-    stock = data.get('stock', 0)
-    descripcion = data.get('descripcion', '')
+    nombre = request.form.get('nombre')
+    categoria = request.form.get('categoria')
+    precio = request.form.get('precio', type=float)
+    stock = request.form.get('stock', 0, type=int)
+    descripcion = request.form.get('descripcion', '')
 
     if not nombre or not categoria or precio is None:
         return jsonify({'message': 'Nombre, categoría y precio son requeridos.'}), 400
@@ -912,18 +1078,27 @@ def api_create_product():
     )
     product_id = product_cursor.lastrowid
     conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
+
+    imagen = request.files.get('imagen')
+    if imagen and imagen.filename:
+        ext = imagen.filename.rsplit('.', 1)[-1].lower() if '.' in imagen.filename else 'png'
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        images_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'images')
+        os.makedirs(images_dir, exist_ok=True)
+        imagen.save(os.path.join(images_dir, filename))
+        conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, filename))
+
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto creado correctamente.', 'id_producto': product_id}), 201
 
 @app.route('/api/product/<int:product_id>', methods=['PUT'])
 def api_update_product(product_id):
-    data = request.get_json() or {}
-    nombre = data.get('nombre')
-    categoria = data.get('categoria')
-    precio = data.get('precio')
-    stock = data.get('stock')
-    descripcion = data.get('descripcion', '')
+    nombre = request.form.get('nombre')
+    categoria = request.form.get('categoria')
+    precio = request.form.get('precio', type=float)
+    stock = request.form.get('stock', type=int)
+    descripcion = request.form.get('descripcion', '')
 
     if not nombre or not categoria or precio is None or stock is None:
         return jsonify({'message': 'Nombre, categoría, precio y stock son requeridos.'}), 400
@@ -943,6 +1118,20 @@ def api_update_product(product_id):
         conn.execute('UPDATE inventario SET stock_actual = ? WHERE id_producto = ?', (stock, product_id))
     else:
         conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
+
+    imagen = request.files.get('imagen')
+    if imagen and imagen.filename:
+        ext = imagen.filename.rsplit('.', 1)[-1].lower() if '.' in imagen.filename else 'png'
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        images_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'images')
+        os.makedirs(images_dir, exist_ok=True)
+        imagen.save(os.path.join(images_dir, filename))
+        existing_img = conn.execute('SELECT id_imagen FROM imagenes_productos WHERE id_producto = ? LIMIT 1', (product_id,)).fetchone()
+        if existing_img:
+            conn.execute('UPDATE imagenes_productos SET ruta_imagen = ? WHERE id_producto = ?', (filename, product_id))
+        else:
+            conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, filename))
+
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto actualizado correctamente.'})
@@ -1062,14 +1251,29 @@ try:
 except Exception:
     total = 0
 
+# Migrar categorías: insertar las 7 estándar + Personalizado
+all_categories = CATEGORIES + ['Personalizado']
+for cat_name in all_categories:
+    existing = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', (cat_name,)).fetchone()
+    if not existing:
+        conn.execute('INSERT INTO categorias (nombre) VALUES (?)', (cat_name,))
+
+# Reasignar productos con categorías antiguas a 'camisas' y eliminar las viejas
+old_cats = [dict(r) for r in conn.execute(
+    'SELECT id_categoria, nombre FROM categorias WHERE nombre NOT IN ({})'.format(
+        ','.join('?' for _ in all_categories)
+    ), all_categories
+).fetchall()]
+if old_cats:
+    default_cat = dict(conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('camisas',)).fetchone())
+    default_id = default_cat['id_categoria']
+    for old in old_cats:
+        conn.execute('UPDATE productos SET id_categoria = ? WHERE id_categoria = ?', (default_id, old['id_categoria']))
+        conn.execute('DELETE FROM categorias WHERE id_categoria = ?', (old['id_categoria'],))
+
 if total == 0:
-    # Crear categoría 'Taza' si no existe
-    cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('Taza',)).fetchone()
-    if cat:
-        cat_id = cat['id_categoria']
-    else:
-        cur = conn.execute('INSERT INTO categorias (nombre) VALUES (?)', ('Taza',))
-        cat_id = cur.lastrowid
+    taza_cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('tazas',)).fetchone()
+    cat_id = taza_cat['id_categoria']
 
     sample_products = [
         ('Taza Baki', 'Taza Baki personalizada', 15.00, 'taza baki.jpeg'),
@@ -1093,6 +1297,16 @@ if total == 0:
     conn.commit()
 
 conn.close()
+
+@app.route('/newsletter', methods=['POST'])
+def newsletter():
+    email = request.form.get('email', '').strip()
+    if email:
+        flash('¡Gracias por suscribirte!', 'success')
+    else:
+        flash('Ingresa un correo válido.', 'error')
+    return redirect(request.referrer or url_for('home'))
+
 @app.route('/')
 def home():
     trending = fetch_products(sort_option='newest', limit=8)
@@ -1108,9 +1322,10 @@ def catalogo():
     
     # Obtener categorías para el filtro
     conn = get_shared_db()
-    categorias = conn.execute('SELECT nombre FROM categorias ORDER BY nombre').fetchall()
+    db_cats = {row['nombre'] for row in conn.execute('SELECT nombre FROM categorias').fetchall()}
     conn.close()
-    categorias_list = [row['nombre'] for row in categorias]
+    order = CATEGORIES + ['Personalizado']
+    categorias_list = [c for c in order if c in db_cats]
     
     cart_count = len(load_cart_from_db()) if 'user_id' in session else len(session.get('cart', []))
     return render_template('catalogo.html', productos=productos, categorias=categorias_list, cart_count=cart_count)
@@ -1301,6 +1516,17 @@ def checkout():
 
         conn = get_shared_db()
         ensure_order_statuses(conn)
+
+        # Validar stock antes de continuar
+        for item in cart:
+            product_id = item.get('id')
+            if product_id:
+                valid, msg = validate_stock(conn, product_id, item.get('quantity', 1))
+                if not valid:
+                    conn.close()
+                    flash(msg, 'error')
+                    return redirect(url_for('carrito'))
+
         cliente_id = get_or_create_client(conn, session.get('user_email'), name, address, telefono, cedula)
         status = conn.execute('SELECT id_estado FROM estados_pedido WHERE nombre = ? LIMIT 1', ('Pendiente',)).fetchone()
         status_id = status['id_estado'] if status else 1
@@ -1325,6 +1551,22 @@ def checkout():
             'INSERT INTO envios (id_pedido, direccion_envio, empresa_envio, numero_guia, estado_envio, fecha_envio, metodo_pago, referencia_pago, tipo_envio) VALUES (?, ?, ?, ?, ?, datetime("now"), ?, ?, ?)',
             (pedido_id, address, envio_desc, '', 'Pendiente', payment_method, reference, shipping_method)
         )
+
+        # También crear registro en ventas / detalle_ventas para que aparezca en Facturas del admin
+        venta_cursor = conn.execute(
+            'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+            (cliente_id, total)
+        )
+        venta_id = venta_cursor.lastrowid
+        for item in cart:
+            product_id = item.get('id')
+            if not product_id:
+                product_id = get_or_create_custom_product(conn)
+            conn.execute(
+                'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+                (venta_id, product_id, item.get('quantity', 1), item['price'])
+            )
+
         conn.commit()
         conn.close()
 

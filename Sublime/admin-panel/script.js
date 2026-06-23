@@ -25,13 +25,11 @@ function apiRequest(endpoint, options = {}) {
         options.method = 'GET';
     }
 
-    if (options.body) {
-
+    if (options.body && !(options.body instanceof FormData)) {
         options.headers = {
             'Content-Type': 'application/json',
             ...(options.headers || {})
         };
-
         options.body = JSON.stringify(options.body);
     }
 
@@ -691,6 +689,10 @@ async function loadSalesData() {
 
             });
 
+        clientSelect.addEventListener('change', () => {
+            loadClientCart();
+        });
+
     } catch (error) {
 
         showToast(
@@ -703,65 +705,175 @@ async function loadSalesData() {
 }
 
 /* =========================
-   CARRITO
+   CARRITO POR CLIENTE
 ========================= */
+
+let currentClientId = null;
+
+async function loadClientCart() {
+    const clientSelect = document.getElementById('salesClientSelect');
+    const clientId = clientSelect.value;
+    const label = document.getElementById('cartClientLabel');
+
+    if (!clientId) {
+        currentClientId = null;
+        cart = [];
+        renderCart();
+        label.textContent = 'Seleccione un cliente';
+        return;
+    }
+
+    currentClientId = clientId;
+    const option = clientSelect.options[clientSelect.selectedIndex];
+    label.textContent = `Cliente: ${option.text}`;
+
+    try {
+        const response = await apiRequest(`admin/cart/${clientId}`);
+        cart = response.cart.map(item => ({
+            id: item.id,
+            nombre: item.name,
+            precio: item.price,
+            cantidad: item.quantity
+        }));
+        renderCart();
+    } catch (error) {
+        showToast('Error cargando carrito del cliente.', 'error');
+    }
+}
+
+async function saveCartToServer() {
+    if (!currentClientId) return;
+    try {
+        await apiRequest(`admin/cart/${currentClientId}`, {
+            method: 'POST',
+            body: {
+                items: cart.map(item => ({
+                    id: item.id,
+                    quantity: item.cantidad,
+                    price: item.precio
+                }))
+            }
+        });
+    } catch (error) {
+        showToast('Error guardando carrito.', 'error');
+    }
+}
 
 function addToCart(product) {
 
-    const existing = cart.find(
-        item => item.id === product.id
-    );
+    if (!currentClientId) {
+        showToast('Seleccione un cliente primero.', 'error');
+        return;
+    }
+
+    const existing = cart.find(item => item.id === product.id);
 
     if (existing) {
-
         existing.cantidad += 1;
-
     } else {
-
         cart.push({
             ...product,
             cantidad: 1
         });
-
     }
 
     renderCart();
+    saveCartToServer();
+}
 
+function updateQuantity(id, delta) {
+    const item = cart.find(i => i.id == id);
+    if (!item) return;
+    item.cantidad = Math.max(1, item.cantidad + delta);
+    renderCart();
+    saveCartToServer();
+}
+
+function removeFromCart(id) {
+    cart = cart.filter(i => i.id != id);
+    renderCart();
+    saveCartToServer();
 }
 
 function renderCart() {
 
-    const cartContent =
-        document.getElementById('cartContent');
+    const cartContent = document.getElementById('cartContent');
+    const cartFooter = document.getElementById('cartFooter');
 
     if (!cartContent) return;
 
     if (!cart.length) {
-
-        cartContent.innerHTML =
-            '<p>Carrito vacío</p>';
-
+        cartContent.innerHTML = '<p>Carrito vacío</p>';
+        if (cartFooter) cartFooter.style.display = 'none';
         return;
-
     }
+
+    const total = cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0);
 
     cartContent.innerHTML = cart.map(item => `
 
-        <div class="cart-item">
+        <div class="cart-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border-color);">
 
-            <strong>${item.nombre}</strong>
+            <div style="flex:1;">
+                <strong>${item.nombre}</strong>
+                <div style="font-size:0.85rem; color:var(--text-muted);">${formatCurrency(item.precio)} c/u</div>
+            </div>
 
-            <p>
-                Cantidad: ${item.cantidad}
-                •
-                ${formatCurrency(item.precio)} c/u
-            </p>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <button type="button" class="btn-qty" onclick="updateQuantity(${item.id}, -1)" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border-color);background:transparent;cursor:pointer;font-weight:700;">−</button>
+                <span style="min-width:20px;text-align:center;font-weight:700;">${item.cantidad}</span>
+                <button type="button" class="btn-qty" onclick="updateQuantity(${item.id}, 1)" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border-color);background:transparent;cursor:pointer;font-weight:700;">+</button>
+                <button type="button" onclick="removeFromCart(${item.id})" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:1.1rem;" title="Eliminar">✕</button>
+            </div>
 
         </div>
 
     `).join('');
 
+    document.getElementById('cartTotal').textContent = formatCurrency(total);
+
+    if (cartFooter) cartFooter.style.display = 'block';
+
 }
+
+/* =========================
+   GENERAR FACTURA
+========================= */
+
+document.addEventListener('click', async (e) => {
+    if (e.target.id === 'generateInvoiceBtn') {
+        if (!currentClientId || !cart.length) {
+            showToast('Seleccione un cliente y agregue productos.', 'error');
+            return;
+        }
+
+        if (!confirm('¿Generar factura para este cliente?')) return;
+
+        try {
+            const response = await apiRequest('admin/invoice/create', {
+                method: 'POST',
+                body: {
+                    cliente_id: Number(currentClientId),
+                    items: cart.map(item => ({
+                        id: item.id,
+                        quantity: item.cantidad,
+                        price: item.precio
+                    }))
+                }
+            });
+
+            cart = [];
+            renderCart();
+            await Promise.all([
+                loadInvoices(),
+                loadDashboard()
+            ]);
+            showToast(`Factura INV-${String(response.invoice_id).padStart(3, '0')} creada.`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+});
 
 /* =========================
    INICIO
@@ -1307,22 +1419,27 @@ if (productForm) {
         const precio = Number(document.getElementById('productPrice').value);
         const stock = Number(document.getElementById('productStock').value);
         const descripcion = document.getElementById('productDescription').value;
+        const imagenInput = document.getElementById('productImagen');
 
         if (!nombre || !categoria || isNaN(precio) || isNaN(stock)) {
             showToast('Completa nombre, categoría, precio y stock.', 'error');
             return;
         }
 
+        const formData = new FormData();
+        formData.append('nombre', nombre);
+        formData.append('categoria', categoria);
+        formData.append('precio', precio);
+        formData.append('stock', stock);
+        formData.append('descripcion', descripcion);
+        if (imagenInput.files.length > 0) {
+            formData.append('imagen', imagenInput.files[0]);
+        }
+
         try {
             await apiRequest('product', {
                 method: 'POST',
-                body: {
-                    nombre,
-                    categoria,
-                    precio,
-                    stock,
-                    descripcion
-                }
+                body: formData
             });
 
             productForm.reset();
@@ -1572,8 +1689,15 @@ async function openEditProduct(id) {
         document.getElementById('editCategoria').value = product.categoria || '';
         document.getElementById('editPrecio').value = product.precio;
         document.getElementById('editStock').value = product.stock;
-        document.getElementById('editImagen').value = product.imagen || '';
         document.getElementById('editDescripcion').value = product.descripcion || '';
+
+        const imgLabel = document.getElementById('editImagenActual');
+        if (product.imagen) {
+            imgLabel.textContent = 'Imagen actual: ' + product.imagen;
+        } else {
+            imgLabel.textContent = 'Sin imagen actual';
+        }
+        document.getElementById('editImagen').value = '';
 
         document.getElementById('editProductModal').classList.add('active');
 
@@ -1609,15 +1733,20 @@ document
 
     try {
 
+        const formData = new FormData();
+        formData.append('nombre', document.getElementById('editNombre').value);
+        formData.append('categoria', document.getElementById('editCategoria').value);
+        formData.append('precio', Number(document.getElementById('editPrecio').value));
+        formData.append('stock', Number(document.getElementById('editStock').value));
+        formData.append('descripcion', document.getElementById('editDescripcion').value);
+        const editImagenInput = document.getElementById('editImagen');
+        if (editImagenInput.files.length > 0) {
+            formData.append('imagen', editImagenInput.files[0]);
+        }
+
         await apiRequest(`product/${id}`, {
             method: 'PUT',
-            body: {
-                nombre: document.getElementById('editNombre').value,
-                categoria: document.getElementById('editCategoria').value,
-                precio: Number(document.getElementById('editPrecio').value),
-                stock: Number(document.getElementById('editStock').value),
-                descripcion: document.getElementById('editDescripcion').value
-            }
+            body: formData
         });
 
         document
@@ -1722,6 +1851,164 @@ window.openInvoiceModal = async function(id){
 
 }
 
+/* =========================
+   REPORTES
+========================= */
+
+document.addEventListener('change', (e) => {
+    if (e.target.id === 'reportType') {
+        const dr = document.getElementById('reportDateRange');
+        dr.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.id === 'generateReportBtn') {
+        const today = new Date();
+        document.getElementById('reportDateFrom').value = today.toISOString().split('T')[0];
+        document.getElementById('reportDateTo').value = today.toISOString().split('T')[0];
+        document.getElementById('reportType').value = 'daily';
+        document.getElementById('reportDateRange').style.display = 'none';
+        document.getElementById('reportModal').classList.add('active');
+    }
+    if (e.target.id === 'cancelReportBtn') {
+        document.getElementById('reportModal').classList.remove('active');
+    }
+    if (e.target.id === 'generateReportAction') {
+        generateReport();
+    }
+});
+
+async function generateReport() {
+    const type = document.getElementById('reportType').value;
+    const format = document.getElementById('reportFormat').value;
+    let dateFrom, dateTo;
+    const today = new Date();
+
+    switch (type) {
+        case 'daily':
+            dateFrom = today.toISOString().split('T')[0];
+            dateTo = dateFrom;
+            break;
+        case 'weekly': {
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - today.getDay());
+            dateFrom = weekStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        }
+        case 'monthly':
+            dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'annual':
+            dateFrom = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'custom':
+            dateFrom = document.getElementById('reportDateFrom').value;
+            dateTo = document.getElementById('reportDateTo').value;
+            if (!dateFrom || !dateTo) {
+                showToast('Seleccione las fechas del reporte.', 'error');
+                return;
+            }
+            break;
+    }
+
+    document.getElementById('reportModal').classList.remove('active');
+
+    try {
+        const response = await apiRequest('report', {
+            method: 'POST',
+            body: { date_from: dateFrom, date_to: dateTo }
+        });
+
+        if (!response.invoices.length) {
+            showToast('No hay facturas en el período seleccionado.', 'error');
+            return;
+        }
+
+        const typeLabels = { daily: 'Diario', weekly: 'Semanal', monthly: 'Mensual', annual: 'Anual', custom: 'Personalizado' };
+
+        if (format === 'excel') {
+            let csv = 'N° Factura,Cliente,Fecha,Items,Total\n';
+            response.invoices.forEach(inv => {
+                const fecha = new Date(inv.fecha).toLocaleDateString('es-VE');
+                const total = (inv.total || 0).toFixed(2);
+                csv += `INV-${String(inv.id).padStart(3,'0')},${inv.cliente || 'Desconocido'},${fecha},${inv.items} producto(s),${total}\n`;
+            });
+            csv += `,,,,Total General,${response.gran_total.toFixed(2)}\n`;
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `reporte_${type}_${dateFrom}_a_${dateTo}.csv`;
+            link.click();
+            showToast('Reporte Excel descargado.', 'success');
+        } else {
+            let html = `
+            <html>
+            <head><title>Reporte ${typeLabels[type]} - Sublime</title>
+            <style>
+                body { font-family: 'Inter', sans-serif; padding: 40px; color: #1a1a2e; }
+                h1 { font-size: 2rem; margin-bottom: 5px; }
+                .sub { color: #888; margin-bottom: 5px; }
+                .periodo { color: #888; margin-bottom: 30px; font-size: 0.9rem; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th { background: #1a1a2e; color: #fff; padding: 12px; text-align: left; }
+                td { padding: 12px; border-bottom: 1px solid #eee; }
+                tr:hover { background: #f5f5f5; }
+                .resumen { margin-top: 25px; display: flex; gap: 30px; justify-content: flex-end; font-size: 1rem; }
+                .resumen div { text-align: right; }
+                .resumen .label { color: #888; font-size: 0.85rem; }
+                .resumen .value { font-size: 1.3rem; font-weight: 900; }
+                .footer { margin-top: 30px; color: #888; font-size: 0.85rem; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; }
+            </style>
+            </head>
+            <body>
+                <h1>Reporte ${typeLabels[type]}</h1>
+                <p class="sub">Sublime - Sistema de Ventas</p>
+                <p class="periodo">Período: ${new Date(dateFrom).toLocaleDateString('es-VE')} - ${new Date(dateTo).toLocaleDateString('es-VE')}</p>
+                <table>
+                    <thead>
+                        <tr><th>N° Factura</th><th>Cliente</th><th>Fecha</th><th>Items</th><th>Total</th></tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            response.invoices.forEach(inv => {
+                html += `
+                    <tr>
+                        <td>INV-${String(inv.id).padStart(3, '0')}</td>
+                        <td>${inv.cliente || 'Desconocido'}</td>
+                        <td>${new Date(inv.fecha).toLocaleDateString('es-VE')}</td>
+                        <td>${inv.items} producto(s)</td>
+                        <td>${formatCurrency(inv.total)}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+                <div class="resumen">
+                    <div><span class="label">Facturas</span><br><span class="value">${response.count}</span></div>
+                    <div><span class="label">Total General</span><br><span class="value">${formatCurrency(response.gran_total)}</span></div>
+                </div>
+                <div class="footer">Reporte generado el ${new Date().toLocaleString('es-VE')}</div>
+            </body>
+            </html>
+            `;
+
+            const win = window.open('', '_blank');
+            win.document.write(html);
+            win.document.close();
+        }
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
 const closeInvoiceBtn = 
     document.getElementById('closeInvoiceBtn');
 
@@ -1736,11 +2023,212 @@ if(closeInvoiceBtn){
 
 }
 
+function buildInvoiceHTML() {
+    const invoice = {
+        number: document.getElementById('invoiceNumber').textContent,
+        client: document.getElementById('invoiceClient').textContent,
+        date: document.getElementById('invoiceDate').textContent,
+        total: document.getElementById('invoiceTotal').textContent,
+        items: []
+    };
+    document.querySelectorAll('#invoiceItems tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length === 4) {
+            invoice.items.push({
+                producto: tds[0].textContent,
+                cantidad: tds[1].textContent,
+                precio: tds[2].textContent,
+                total: tds[3].textContent
+            });
+        }
+    });
+    const rows = invoice.items.map((item, i) => {
+        const bg = i % 2 === 0 ? ' style="background:#f5f5f5"' : '';
+        return `<tr${bg}><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:9pt">${item.producto}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:9pt">${item.cantidad}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:9pt">${item.precio}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:9pt">${item.total}</td></tr>`;
+    }).join('');
+
+    return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>${invoice.number} - Sublime</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica','Arial',sans-serif;padding:40px;color:#1a1a2e}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:0.5pt solid #1a1a2e;padding-bottom:15px;margin-bottom:18px}
+.brand{font-size:24pt;font-weight:700;letter-spacing:3px}
+.brand small{font-size:10pt;font-weight:400;color:#888;letter-spacing:0}
+.title{text-align:right}
+.title h1{font-size:18pt;font-weight:700;margin:0}
+.title p{font-size:12pt;color:#888}
+.info{display:flex;justify-content:space-between;margin-bottom:18px}
+.info div h3{font-size:9pt;font-weight:700;color:#888;margin-bottom:2px}
+.info div p{font-size:11pt;font-weight:400;margin:0}
+table{width:100%;border-collapse:collapse;margin-bottom:10px}
+th{padding:5px 8px;background:#1a1a2e;color:#fff;font-size:9pt;font-weight:700;text-align:left}
+.total{text-align:right;font-size:13pt;font-weight:700;padding-top:8px;border-top:0.5pt solid #1a1a2e}
+.footer{position:fixed;bottom:10px;left:0;width:100%;text-align:center;color:#888;font-size:8pt;border-top:0.3pt solid #ddd;padding-top:10px}
+@media print{body{padding:20px}}
+@page{margin:10mm}
+</style>
+</head>
+<body>
+<div class="header">
+<div class="brand">SUBLIME <small>Sistema de Ventas</small></div>
+<div class="title"><h1>FACTURA</h1><p>${invoice.number}</p></div>
+</div>
+<div class="info">
+<div><h3>Facturado a:</h3><p>${invoice.client}</p></div>
+<div><h3>Fecha:</h3><p>${invoice.date}</p></div>
+</div>
+<table>
+<thead><tr><th style="width:40%">Producto</th><th style="width:15%">Cantidad</th><th style="width:20%">Precio Unit.</th><th style="width:25%">Total</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>
+<div class="total">Total: ${invoice.total}</div>
+<div class="footer">Factura generada el ${new Date().toLocaleString('es-VE')}</div>
+</body>
+</html>`;
+}
+
 document
 .getElementById('downloadInvoiceBtn')
 .addEventListener('click',()=>{
 
-    window.print();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = 210;
+    const margin = 20;
+    const usableW = pageW - margin * 2;
+    let y = margin;
+
+    const invoice = {
+        number: document.getElementById('invoiceNumber').textContent,
+        client: document.getElementById('invoiceClient').textContent,
+        date: document.getElementById('invoiceDate').textContent,
+        total: document.getElementById('invoiceTotal').textContent,
+        items: []
+    };
+    document.querySelectorAll('#invoiceItems tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length === 4) {
+            invoice.items.push({
+                producto: tds[0].textContent,
+                cantidad: tds[1].textContent,
+                precio: tds[2].textContent,
+                total: tds[3].textContent
+            });
+        }
+    });
+
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(24);
+    doc.text('SUBLIME', margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Sistema de Ventas', margin, y + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    const titleW = doc.getTextWidth('FACTURA');
+    doc.text('FACTURA', pageW - margin - titleW, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    const numW = doc.getTextWidth(invoice.number);
+    doc.text(invoice.number, pageW - margin - numW, y + 6);
+
+    y += 15;
+    doc.setDrawColor(26, 26, 46);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 10;
+
+    // Info
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('Facturado a:', margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(invoice.client, margin, y + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    const dateLabelW = doc.getTextWidth('Fecha:');
+    doc.text('Fecha:', pageW - margin - 50, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(invoice.date, pageW - margin - 50, y + 5);
+
+    y += 18;
+
+    // Table header
+    const cols = [
+        { label: 'Producto', x: margin, w: usableW * 0.4 },
+        { label: 'Cantidad', x: margin + usableW * 0.4, w: usableW * 0.15 },
+        { label: 'Precio Unit.', x: margin + usableW * 0.55, w: usableW * 0.2 },
+        { label: 'Total', x: margin + usableW * 0.75, w: usableW * 0.25 }
+    ];
+
+    doc.setFillColor(26, 26, 46);
+    doc.rect(margin, y, usableW, 8, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    cols.forEach(c => doc.text(c.label, c.x + 2, y + 5.5));
+    y += 8;
+
+    // Table rows
+    doc.setTextColor(26, 26, 46);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    invoice.items.forEach((item, i) => {
+        if (i % 2 === 0) {
+            doc.setFillColor(245, 245, 245);
+            doc.rect(margin, y, usableW, 7, 'F');
+        }
+        doc.text(item.producto, cols[0].x + 2, y + 5);
+        doc.text(item.cantidad, cols[1].x + 2, y + 5);
+        doc.text(item.precio, cols[2].x + 2, y + 5);
+        doc.text(item.total, cols[3].x + 2, y + 5);
+        y += 7;
+    });
+
+    // Total line
+    y += 3;
+    doc.setDrawColor(26, 26, 46);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 5;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    const totalLabel = 'Total: ' + invoice.total;
+    const totalW = doc.getTextWidth(totalLabel);
+    doc.text(totalLabel, pageW - margin - totalW, y);
+
+    // Footer
+    y = 277;
+    doc.setDrawColor(221, 221, 221);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, pageW - margin, y);
+    doc.setTextColor(136, 136, 136);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const footerText = 'Factura generada el ' + new Date().toLocaleString('es-VE');
+    const footerW = doc.getTextWidth(footerText);
+    doc.text(footerText, (pageW - footerW) / 2, y + 5);
+
+    doc.save(invoice.number + '.pdf');
+
+});
+
+document
+.getElementById('printInvoiceBtn')
+.addEventListener('click',()=>{
+
+    const html = buildInvoiceHTML();
+    const win = window.open('about:blank', '_blank');
+    win.document.write(html);
+    win.document.close();
+    setTimeout(() => { win.focus(); win.print(); }, 300);
 
 });
 

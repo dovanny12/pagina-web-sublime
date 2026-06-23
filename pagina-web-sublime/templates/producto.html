@@ -24,6 +24,7 @@
                 data-product-name="{{ producto.name }}"
                 data-product-price="{{ format_price(producto.price) }}"
                 data-product-image="{{ url_for('static', filename='images/' + producto.image_url) }}"
+                data-product-category="{{ producto.category }}"
                 style="width: 100%; text-align: center; padding: 20px; font-size: 1.2rem;">
             AÑADIR AL CARRITO
         </button>

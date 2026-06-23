@@ -2100,16 +2100,130 @@ document
 .getElementById('downloadInvoiceBtn')
 .addEventListener('click',()=>{
 
-    const html = buildInvoiceHTML();
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = document.getElementById('invoiceNumber').textContent + '.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = 210;
+    const margin = 20;
+    const usableW = pageW - margin * 2;
+    let y = margin;
+
+    const invoice = {
+        number: document.getElementById('invoiceNumber').textContent,
+        client: document.getElementById('invoiceClient').textContent,
+        date: document.getElementById('invoiceDate').textContent,
+        total: document.getElementById('invoiceTotal').textContent,
+        items: []
+    };
+    document.querySelectorAll('#invoiceItems tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length === 4) {
+            invoice.items.push({
+                producto: tds[0].textContent,
+                cantidad: tds[1].textContent,
+                precio: tds[2].textContent,
+                total: tds[3].textContent
+            });
+        }
+    });
+
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(24);
+    doc.text('SUBLIME', margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Sistema de Ventas', margin, y + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    const titleW = doc.getTextWidth('FACTURA');
+    doc.text('FACTURA', pageW - margin - titleW, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    const numW = doc.getTextWidth(invoice.number);
+    doc.text(invoice.number, pageW - margin - numW, y + 6);
+
+    y += 15;
+    doc.setDrawColor(26, 26, 46);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 10;
+
+    // Info
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('Facturado a:', margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(invoice.client, margin, y + 5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    const dateLabelW = doc.getTextWidth('Fecha:');
+    doc.text('Fecha:', pageW - margin - 50, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(invoice.date, pageW - margin - 50, y + 5);
+
+    y += 18;
+
+    // Table header
+    const cols = [
+        { label: 'Producto', x: margin, w: usableW * 0.4 },
+        { label: 'Cantidad', x: margin + usableW * 0.4, w: usableW * 0.15 },
+        { label: 'Precio Unit.', x: margin + usableW * 0.55, w: usableW * 0.2 },
+        { label: 'Total', x: margin + usableW * 0.75, w: usableW * 0.25 }
+    ];
+
+    doc.setFillColor(26, 26, 46);
+    doc.rect(margin, y, usableW, 8, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    cols.forEach(c => doc.text(c.label, c.x + 2, y + 5.5));
+    y += 8;
+
+    // Table rows
+    doc.setTextColor(26, 26, 46);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    invoice.items.forEach((item, i) => {
+        if (i % 2 === 0) {
+            doc.setFillColor(245, 245, 245);
+            doc.rect(margin, y, usableW, 7, 'F');
+        }
+        doc.text(item.producto, cols[0].x + 2, y + 5);
+        doc.text(item.cantidad, cols[1].x + 2, y + 5);
+        doc.text(item.precio, cols[2].x + 2, y + 5);
+        doc.text(item.total, cols[3].x + 2, y + 5);
+        y += 7;
+    });
+
+    // Total line
+    y += 3;
+    doc.setDrawColor(26, 26, 46);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 5;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    const totalLabel = 'Total: ' + invoice.total;
+    const totalW = doc.getTextWidth(totalLabel);
+    doc.text(totalLabel, pageW - margin - totalW, y);
+
+    // Footer
+    y = 277;
+    doc.setDrawColor(221, 221, 221);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, pageW - margin, y);
+    doc.setTextColor(136, 136, 136);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const footerText = 'Factura generada el ' + new Date().toLocaleString('es-VE');
+    const footerW = doc.getTextWidth(footerText);
+    doc.text(footerText, (pageW - footerW) / 2, y + 5);
+
+    doc.save(invoice.number + '.pdf');
 
 });
 

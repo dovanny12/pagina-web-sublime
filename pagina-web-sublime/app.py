@@ -745,6 +745,24 @@ def api_checkout():
         'INSERT INTO envios (id_pedido, direccion_envio, empresa_envio, numero_guia, estado_envio, fecha_envio, metodo_pago, referencia_pago, tipo_envio) VALUES (?, ?, ?, ?, ?, datetime("now"), ?, ?, ?)',
         (pedido_id, address, 'Pendiente', '', 'Pendiente', payment_method or 'Pendiente', reference or '', 'destino')
     )
+
+    # También crear registro en ventas / detalle_ventas para que aparezca en Facturas del admin
+    venta_cursor = conn.execute(
+        'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+        (cliente_id, total)
+    )
+    venta_id = venta_cursor.lastrowid
+    for item in cart_items:
+        product_id = item.get('id')
+        if not product_id or product_id == 0:
+            product_id = get_or_create_custom_product(conn)
+        cantidad = max(1, int(item.get('quantity', 1)))
+        precio_unitario = float(item.get('price', 0))
+        conn.execute(
+            'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (venta_id, product_id, cantidad, precio_unitario)
+        )
+
     conn.commit()
     conn.close()
 
@@ -1458,6 +1476,22 @@ def checkout():
             'INSERT INTO envios (id_pedido, direccion_envio, empresa_envio, numero_guia, estado_envio, fecha_envio, metodo_pago, referencia_pago, tipo_envio) VALUES (?, ?, ?, ?, ?, datetime("now"), ?, ?, ?)',
             (pedido_id, address, envio_desc, '', 'Pendiente', payment_method, reference, shipping_method)
         )
+
+        # También crear registro en ventas / detalle_ventas para que aparezca en Facturas del admin
+        venta_cursor = conn.execute(
+            'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+            (cliente_id, total)
+        )
+        venta_id = venta_cursor.lastrowid
+        for item in cart:
+            product_id = item.get('id')
+            if not product_id:
+                product_id = get_or_create_custom_product(conn)
+            conn.execute(
+                'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+                (venta_id, product_id, item.get('quantity', 1), item['price'])
+            )
+
         conn.commit()
         conn.close()
 

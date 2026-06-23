@@ -1852,36 +1852,123 @@ window.openInvoiceModal = async function(id){
 }
 
 /* =========================
-   GENERAR REPORTE
+   REPORTES
 ========================= */
 
-document.addEventListener('click', async (e) => {
+document.addEventListener('change', (e) => {
+    if (e.target.id === 'reportType') {
+        const dr = document.getElementById('reportDateRange');
+        dr.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    }
+});
+
+document.addEventListener('click', (e) => {
     if (e.target.id === 'generateReportBtn') {
-        try {
-            const response = await apiRequest('invoices');
-            if (!response.invoices.length) {
-                showToast('No hay facturas para generar un reporte.', 'error');
+        const today = new Date();
+        document.getElementById('reportDateFrom').value = today.toISOString().split('T')[0];
+        document.getElementById('reportDateTo').value = today.toISOString().split('T')[0];
+        document.getElementById('reportType').value = 'daily';
+        document.getElementById('reportDateRange').style.display = 'none';
+        document.getElementById('reportModal').classList.add('active');
+    }
+    if (e.target.id === 'cancelReportBtn') {
+        document.getElementById('reportModal').classList.remove('active');
+    }
+    if (e.target.id === 'generateReportAction') {
+        generateReport();
+    }
+});
+
+async function generateReport() {
+    const type = document.getElementById('reportType').value;
+    const format = document.getElementById('reportFormat').value;
+    let dateFrom, dateTo;
+    const today = new Date();
+
+    switch (type) {
+        case 'daily':
+            dateFrom = today.toISOString().split('T')[0];
+            dateTo = dateFrom;
+            break;
+        case 'weekly': {
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - today.getDay());
+            dateFrom = weekStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        }
+        case 'monthly':
+            dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'annual':
+            dateFrom = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'custom':
+            dateFrom = document.getElementById('reportDateFrom').value;
+            dateTo = document.getElementById('reportDateTo').value;
+            if (!dateFrom || !dateTo) {
+                showToast('Seleccione las fechas del reporte.', 'error');
                 return;
             }
+            break;
+    }
 
+    document.getElementById('reportModal').classList.remove('active');
+
+    try {
+        const response = await apiRequest('report', {
+            method: 'POST',
+            body: { date_from: dateFrom, date_to: dateTo }
+        });
+
+        if (!response.invoices.length) {
+            showToast('No hay facturas en el período seleccionado.', 'error');
+            return;
+        }
+
+        const typeLabels = { daily: 'Diario', weekly: 'Semanal', monthly: 'Mensual', annual: 'Anual', custom: 'Personalizado' };
+
+        if (format === 'excel') {
+            let csv = 'N° Factura,Cliente,Fecha,Items,Total\n';
+            response.invoices.forEach(inv => {
+                const fecha = new Date(inv.fecha).toLocaleDateString('es-VE');
+                const total = (inv.total || 0).toFixed(2);
+                csv += `INV-${String(inv.id).padStart(3,'0')},${inv.cliente || 'Desconocido'},${fecha},${inv.items} producto(s),${total}\n`;
+            });
+            csv += `,,,,Total General,${response.gran_total.toFixed(2)}\n`;
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `reporte_${type}_${dateFrom}_a_${dateTo}.csv`;
+            link.click();
+            showToast('Reporte Excel descargado.', 'success');
+        } else {
             let html = `
             <html>
-            <head><title>Reporte de Facturas - Sublime</title>
+            <head><title>Reporte ${typeLabels[type]} - Sublime</title>
             <style>
                 body { font-family: 'Inter', sans-serif; padding: 40px; color: #1a1a2e; }
                 h1 { font-size: 2rem; margin-bottom: 5px; }
-                .sub { color: #888; margin-bottom: 30px; }
+                .sub { color: #888; margin-bottom: 5px; }
+                .periodo { color: #888; margin-bottom: 30px; font-size: 0.9rem; }
                 table { width: 100%; border-collapse: collapse; margin-top: 20px; }
                 th { background: #1a1a2e; color: #fff; padding: 12px; text-align: left; }
                 td { padding: 12px; border-bottom: 1px solid #eee; }
                 tr:hover { background: #f5f5f5; }
-                .total-row { font-weight: 700; font-size: 1.1rem; background: #f0f0f0; }
-                .footer { margin-top: 30px; color: #888; font-size: 0.85rem; text-align: center; }
+                .resumen { margin-top: 25px; display: flex; gap: 30px; justify-content: flex-end; font-size: 1rem; }
+                .resumen div { text-align: right; }
+                .resumen .label { color: #888; font-size: 0.85rem; }
+                .resumen .value { font-size: 1.3rem; font-weight: 900; }
+                .footer { margin-top: 30px; color: #888; font-size: 0.85rem; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; }
             </style>
             </head>
             <body>
-                <h1>Reporte de Facturas</h1>
+                <h1>Reporte ${typeLabels[type]}</h1>
                 <p class="sub">Sublime - Sistema de Ventas</p>
+                <p class="periodo">Período: ${new Date(dateFrom).toLocaleDateString('es-VE')} - ${new Date(dateTo).toLocaleDateString('es-VE')}</p>
                 <table>
                     <thead>
                         <tr><th>N° Factura</th><th>Cliente</th><th>Fecha</th><th>Items</th><th>Total</th></tr>
@@ -1889,9 +1976,7 @@ document.addEventListener('click', async (e) => {
                     <tbody>
             `;
 
-            let granTotal = 0;
             response.invoices.forEach(inv => {
-                granTotal += inv.total;
                 html += `
                     <tr>
                         <td>INV-${String(inv.id).padStart(3, '0')}</td>
@@ -1906,7 +1991,10 @@ document.addEventListener('click', async (e) => {
             html += `
                     </tbody>
                 </table>
-                <p style="text-align:right;font-size:1.2rem;font-weight:700;margin-top:20px;">Total General: ${formatCurrency(granTotal)}</p>
+                <div class="resumen">
+                    <div><span class="label">Facturas</span><br><span class="value">${response.count}</span></div>
+                    <div><span class="label">Total General</span><br><span class="value">${formatCurrency(response.gran_total)}</span></div>
+                </div>
                 <div class="footer">Reporte generado el ${new Date().toLocaleString('es-VE')}</div>
             </body>
             </html>
@@ -1915,11 +2003,11 @@ document.addEventListener('click', async (e) => {
             const win = window.open('', '_blank');
             win.document.write(html);
             win.document.close();
-        } catch (error) {
-            showToast('Error generando reporte.', 'error');
         }
+    } catch (error) {
+        showToast(error.message, 'error');
     }
-});
+}
 
 const closeInvoiceBtn = 
     document.getElementById('closeInvoiceBtn');

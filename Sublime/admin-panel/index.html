@@ -1119,6 +1119,43 @@
 
 </div>
 
+<div id="reportModal" class="client-modal">
+
+    <div class="client-modal-content" style="max-width: 500px;">
+
+        <h2>Generar Reporte</h2>
+
+        <label>Tipo de Reporte</label>
+        <select id="reportType" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);margin-bottom:15px;">
+            <option value="daily">Diario</option>
+            <option value="weekly">Semanal</option>
+            <option value="monthly">Mensual</option>
+            <option value="annual">Anual</option>
+            <option value="custom">Personalizado</option>
+        </select>
+
+        <div id="reportDateRange" style="display:none;">
+            <label>Desde</label>
+            <input type="date" id="reportDateFrom" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);margin-bottom:10px;">
+            <label>Hasta</label>
+            <input type="date" id="reportDateTo" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);margin-bottom:15px;">
+        </div>
+
+        <label>Formato de Exportación</label>
+        <select id="reportFormat" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);margin-bottom:20px;">
+            <option value="pdf">PDF (vista para imprimir)</option>
+            <option value="excel">Excel (CSV)</option>
+        </select>
+
+        <div class="client-modal-actions">
+            <button id="generateReportAction">Generar</button>
+            <button id="cancelReportBtn">Cancelar</button>
+        </div>
+
+    </div>
+
+</div>
+
 <div id="editClientModal" class="client-modal">
 
     <div class="client-modal-content">

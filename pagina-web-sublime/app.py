@@ -941,6 +941,38 @@ def api_invoice_detail(invoice_id):
     invoice['detalles'] = [dict(row) for row in detalles]
     return jsonify(invoice)
 
+
+@app.route('/api/report', methods=['POST'])
+def api_report():
+    data = request.get_json() or {}
+    date_from = data.get('date_from', '')
+    date_to = data.get('date_to', '')
+
+    where = ''
+    params = []
+    if date_from and date_to:
+        where = 'WHERE v.fecha >= ? AND v.fecha <= ?'
+        params = [date_from, date_to + ' 23:59:59']
+
+    conn = get_shared_db()
+    invoices = conn.execute(
+        f'SELECT v.id_venta AS id, c.nombre AS cliente, v.fecha, COUNT(d.id_detalle) AS items, IFNULL(v.total, 0) AS total '
+        f'FROM ventas v LEFT JOIN clientes c ON v.id_cliente = c.id_cliente '
+        f'LEFT JOIN detalle_ventas d ON d.id_venta = v.id_venta '
+        f'{where} '
+        f'GROUP BY v.id_venta ORDER BY v.fecha DESC',
+        params
+    ).fetchall()
+
+    gran_total = sum(row['total'] for row in invoices)
+    conn.close()
+    return jsonify({
+        'invoices': [dict(row) for row in invoices],
+        'gran_total': gran_total,
+        'count': len(invoices)
+    })
+
+
 @app.route('/api/sales-data', methods=['GET'])
 def api_sales_data():
     conn = get_shared_db()

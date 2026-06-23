@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import uuid
 import sqlite3
 import urllib.request
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_from_directory
@@ -891,13 +892,11 @@ def api_sales_data():
 
 @app.route('/api/product', methods=['POST'])
 def api_create_product():
-    data = request.get_json() or {}
-    nombre = data.get('nombre')
-    categoria = data.get('categoria')
-    precio = data.get('precio')
-    stock = data.get('stock', 0)
-    descripcion = data.get('descripcion', '')
-    imagen = data.get('imagen', '')
+    nombre = request.form.get('nombre')
+    categoria = request.form.get('categoria')
+    precio = request.form.get('precio', type=float)
+    stock = request.form.get('stock', 0, type=int)
+    descripcion = request.form.get('descripcion', '')
 
     if not nombre or not categoria or precio is None:
         return jsonify({'message': 'Nombre, categoría y precio son requeridos.'}), 400
@@ -916,21 +915,27 @@ def api_create_product():
     )
     product_id = product_cursor.lastrowid
     conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
-    if imagen:
-        conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, imagen))
+
+    imagen = request.files.get('imagen')
+    if imagen and imagen.filename:
+        ext = imagen.filename.rsplit('.', 1)[-1].lower() if '.' in imagen.filename else 'png'
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        images_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'images')
+        os.makedirs(images_dir, exist_ok=True)
+        imagen.save(os.path.join(images_dir, filename))
+        conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, filename))
+
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto creado correctamente.', 'id_producto': product_id}), 201
 
 @app.route('/api/product/<int:product_id>', methods=['PUT'])
 def api_update_product(product_id):
-    data = request.get_json() or {}
-    nombre = data.get('nombre')
-    categoria = data.get('categoria')
-    precio = data.get('precio')
-    stock = data.get('stock')
-    descripcion = data.get('descripcion', '')
-    imagen = data.get('imagen', '')
+    nombre = request.form.get('nombre')
+    categoria = request.form.get('categoria')
+    precio = request.form.get('precio', type=float)
+    stock = request.form.get('stock', type=int)
+    descripcion = request.form.get('descripcion', '')
 
     if not nombre or not categoria or precio is None or stock is None:
         return jsonify({'message': 'Nombre, categoría, precio y stock son requeridos.'}), 400
@@ -950,12 +955,20 @@ def api_update_product(product_id):
         conn.execute('UPDATE inventario SET stock_actual = ? WHERE id_producto = ?', (stock, product_id))
     else:
         conn.execute('INSERT INTO inventario (id_producto, stock_actual) VALUES (?, ?)', (product_id, stock))
-    if imagen:
+
+    imagen = request.files.get('imagen')
+    if imagen and imagen.filename:
+        ext = imagen.filename.rsplit('.', 1)[-1].lower() if '.' in imagen.filename else 'png'
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        images_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'images')
+        os.makedirs(images_dir, exist_ok=True)
+        imagen.save(os.path.join(images_dir, filename))
         existing_img = conn.execute('SELECT id_imagen FROM imagenes_productos WHERE id_producto = ? LIMIT 1', (product_id,)).fetchone()
         if existing_img:
-            conn.execute('UPDATE imagenes_productos SET ruta_imagen = ? WHERE id_producto = ?', (imagen, product_id))
+            conn.execute('UPDATE imagenes_productos SET ruta_imagen = ? WHERE id_producto = ?', (filename, product_id))
         else:
-            conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, imagen))
+            conn.execute('INSERT INTO imagenes_productos (id_producto, ruta_imagen) VALUES (?, ?)', (product_id, filename))
+
     conn.commit()
     conn.close()
     return jsonify({'message': 'Producto actualizado correctamente.'})

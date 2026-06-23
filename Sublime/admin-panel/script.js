@@ -25,13 +25,11 @@ function apiRequest(endpoint, options = {}) {
         options.method = 'GET';
     }
 
-    if (options.body) {
-
+    if (options.body && !(options.body instanceof FormData)) {
         options.headers = {
             'Content-Type': 'application/json',
             ...(options.headers || {})
         };
-
         options.body = JSON.stringify(options.body);
     }
 
@@ -1307,24 +1305,27 @@ if (productForm) {
         const precio = Number(document.getElementById('productPrice').value);
         const stock = Number(document.getElementById('productStock').value);
         const descripcion = document.getElementById('productDescription').value;
-        const imagen = document.getElementById('productImagen').value;
+        const imagenInput = document.getElementById('productImagen');
 
         if (!nombre || !categoria || isNaN(precio) || isNaN(stock)) {
             showToast('Completa nombre, categoría, precio y stock.', 'error');
             return;
         }
 
+        const formData = new FormData();
+        formData.append('nombre', nombre);
+        formData.append('categoria', categoria);
+        formData.append('precio', precio);
+        formData.append('stock', stock);
+        formData.append('descripcion', descripcion);
+        if (imagenInput.files.length > 0) {
+            formData.append('imagen', imagenInput.files[0]);
+        }
+
         try {
             await apiRequest('product', {
                 method: 'POST',
-                body: {
-                    nombre,
-                    categoria,
-                    precio,
-                    stock,
-                    descripcion,
-                    imagen
-                }
+                body: formData
             });
 
             productForm.reset();
@@ -1574,8 +1575,15 @@ async function openEditProduct(id) {
         document.getElementById('editCategoria').value = product.categoria || '';
         document.getElementById('editPrecio').value = product.precio;
         document.getElementById('editStock').value = product.stock;
-        document.getElementById('editImagen').value = product.imagen || '';
         document.getElementById('editDescripcion').value = product.descripcion || '';
+
+        const imgLabel = document.getElementById('editImagenActual');
+        if (product.imagen) {
+            imgLabel.textContent = 'Imagen actual: ' + product.imagen;
+        } else {
+            imgLabel.textContent = 'Sin imagen actual';
+        }
+        document.getElementById('editImagen').value = '';
 
         document.getElementById('editProductModal').classList.add('active');
 
@@ -1611,16 +1619,20 @@ document
 
     try {
 
+        const formData = new FormData();
+        formData.append('nombre', document.getElementById('editNombre').value);
+        formData.append('categoria', document.getElementById('editCategoria').value);
+        formData.append('precio', Number(document.getElementById('editPrecio').value));
+        formData.append('stock', Number(document.getElementById('editStock').value));
+        formData.append('descripcion', document.getElementById('editDescripcion').value);
+        const editImagenInput = document.getElementById('editImagen');
+        if (editImagenInput.files.length > 0) {
+            formData.append('imagen', editImagenInput.files[0]);
+        }
+
         await apiRequest(`product/${id}`, {
             method: 'PUT',
-            body: {
-                nombre: document.getElementById('editNombre').value,
-                categoria: document.getElementById('editCategoria').value,
-                precio: Number(document.getElementById('editPrecio').value),
-                stock: Number(document.getElementById('editStock').value),
-                descripcion: document.getElementById('editDescripcion').value,
-                imagen: document.getElementById('editImagen').value
-            }
+            body: formData
         });
 
         document

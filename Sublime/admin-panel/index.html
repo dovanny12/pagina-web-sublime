@@ -801,11 +801,11 @@
 
             <div class="product-group">
 
-                <label>URL de Imagen</label>
+                <label>Imagen del Producto</label>
 
-                <input type="text"
+                <input type="file"
                        id="productImagen"
-                       placeholder="ej: taza-anime.jpeg (debe estar en static/images/)">
+                       accept="image/*">
 
             </div>
 
@@ -969,12 +969,12 @@
         </div>
 
         <div class="form-group">
-            <label>URL de Imagen</label>
-
+            <label>Imagen del Producto</label>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px;" id="editImagenActual"></div>
             <input
-                type="text"
+                type="file"
                 id="editImagen"
-                placeholder="https://...">
+                accept="image/*">
         </div>
 
         <div class="form-group">

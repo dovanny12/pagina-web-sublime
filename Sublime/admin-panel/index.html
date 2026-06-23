@@ -13,10 +13,10 @@
         #invoiceModal.active,
         #invoiceModal.active * { visibility: visible; }
         #invoiceModal.active { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 999999; }
+        #invoiceModal.active .invoice-actions { display: none !important; }
         #invoiceModal.active .invoice-content { max-width: 100%; box-shadow: none; border-radius: 0; padding: 20px; }
-        #invoiceModal.active .invoice-actions { display: none; }
-        .sidebar, .main-content, .page-section:not(#invoices), .invoice-modal:not(.active) { display: none; }
-        @page { margin: 15mm; }
+        .sidebar, .main-content, .page-section, .invoice-modal:not(.active) { display: none !important; }
+        @page { margin: 10mm; }
     }
 </style>
 

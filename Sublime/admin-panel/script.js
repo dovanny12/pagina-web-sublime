@@ -1851,6 +1851,76 @@ window.openInvoiceModal = async function(id){
 
 }
 
+/* =========================
+   GENERAR REPORTE
+========================= */
+
+document.addEventListener('click', async (e) => {
+    if (e.target.id === 'generateReportBtn') {
+        try {
+            const response = await apiRequest('invoices');
+            if (!response.invoices.length) {
+                showToast('No hay facturas para generar un reporte.', 'error');
+                return;
+            }
+
+            let html = `
+            <html>
+            <head><title>Reporte de Facturas - Sublime</title>
+            <style>
+                body { font-family: 'Inter', sans-serif; padding: 40px; color: #1a1a2e; }
+                h1 { font-size: 2rem; margin-bottom: 5px; }
+                .sub { color: #888; margin-bottom: 30px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th { background: #1a1a2e; color: #fff; padding: 12px; text-align: left; }
+                td { padding: 12px; border-bottom: 1px solid #eee; }
+                tr:hover { background: #f5f5f5; }
+                .total-row { font-weight: 700; font-size: 1.1rem; background: #f0f0f0; }
+                .footer { margin-top: 30px; color: #888; font-size: 0.85rem; text-align: center; }
+            </style>
+            </head>
+            <body>
+                <h1>Reporte de Facturas</h1>
+                <p class="sub">Sublime - Sistema de Ventas</p>
+                <table>
+                    <thead>
+                        <tr><th>N° Factura</th><th>Cliente</th><th>Fecha</th><th>Items</th><th>Total</th></tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            let granTotal = 0;
+            response.invoices.forEach(inv => {
+                granTotal += inv.total;
+                html += `
+                    <tr>
+                        <td>INV-${String(inv.id).padStart(3, '0')}</td>
+                        <td>${inv.cliente || 'Desconocido'}</td>
+                        <td>${new Date(inv.fecha).toLocaleDateString('es-VE')}</td>
+                        <td>${inv.items} producto(s)</td>
+                        <td>${formatCurrency(inv.total)}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+                <p style="text-align:right;font-size:1.2rem;font-weight:700;margin-top:20px;">Total General: ${formatCurrency(granTotal)}</p>
+                <div class="footer">Reporte generado el ${new Date().toLocaleString('es-VE')}</div>
+            </body>
+            </html>
+            `;
+
+            const win = window.open('', '_blank');
+            win.document.write(html);
+            win.document.close();
+        } catch (error) {
+            showToast('Error generando reporte.', 'error');
+        }
+    }
+});
+
 const closeInvoiceBtn = 
     document.getElementById('closeInvoiceBtn');
 

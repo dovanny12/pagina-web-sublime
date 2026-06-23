@@ -437,10 +437,21 @@ def api_products():
 
 @app.route('/api/product/<int:product_id>', methods=['GET'])
 def api_product(product_id):
-    producto = fetch_product_by_id(product_id)
-    if not producto:
-        return jsonify({'mensaje': 'Producto no encontrado.'}), 404
-    return jsonify({'producto': producto})
+    conn = get_shared_db()
+    product = conn.execute(
+        'SELECT p.id_producto, p.nombre, p.descripcion, p.precio_venta AS precio, '
+        'c.nombre AS categoria, IFNULL(i.stock_actual, 0) AS stock, '
+        'COALESCE((SELECT ruta_imagen FROM imagenes_productos WHERE id_producto = p.id_producto LIMIT 1), \'\') AS imagen '
+        'FROM productos p '
+        'LEFT JOIN categorias c ON p.id_categoria = c.id_categoria '
+        'LEFT JOIN inventario i ON i.id_producto = p.id_producto '
+        'WHERE p.id_producto = ?',
+        (product_id,)
+    ).fetchone()
+    conn.close()
+    if not product:
+        return jsonify({'message': 'Producto no encontrado.'}), 404
+    return jsonify({'product': dict(product)})
 
 
 def get_cliente_id_by_session():

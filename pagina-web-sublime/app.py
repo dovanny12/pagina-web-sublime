@@ -1259,17 +1259,17 @@ for cat_name in all_categories:
         conn.execute('INSERT INTO categorias (nombre) VALUES (?)', (cat_name,))
 
 # Reasignar productos con categorías antiguas a 'camisas' y eliminar las viejas
-old_cats = conn.execute(
+old_cats = [dict(r) for r in conn.execute(
     'SELECT id_categoria, nombre FROM categorias WHERE nombre NOT IN ({})'.format(
         ','.join('?' for _ in all_categories)
     ), all_categories
-).fetchall()
+).fetchall()]
 if old_cats:
-    default_cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('camisas',)).fetchone()
+    default_cat = dict(conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('camisas',)).fetchone())
     default_id = default_cat['id_categoria']
     for old in old_cats:
         conn.execute('UPDATE productos SET id_categoria = ? WHERE id_categoria = ?', (default_id, old['id_categoria']))
-        conn.execute('DELETE FROM categorias WHERE id_categoria = ?', (old['id_categoria']))
+        conn.execute('DELETE FROM categorias WHERE id_categoria = ?', (old['id_categoria'],))
 
 if total == 0:
     taza_cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('tazas',)).fetchone()

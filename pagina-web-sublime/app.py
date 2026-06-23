@@ -108,6 +108,24 @@ def seed_default_admin():
         conn.close()
 
 
+CATEGORIES = ['camisas', 'tazas', 'gorras', 'llaveros', 'termos/filtros', 'mousepads', 'bolígrafos']
+
+
+def validate_stock(conn, product_id, quantity=1):
+    if not product_id:
+        return True, None
+    row = conn.execute(
+        'SELECT IFNULL(stock_actual, 0) AS stock FROM inventario WHERE id_producto = ?',
+        (product_id,)
+    ).fetchone()
+    stock = row['stock'] if row else 0
+    if stock < quantity:
+        name_row = conn.execute('SELECT nombre FROM productos WHERE id_producto = ?', (product_id,)).fetchone()
+        name = name_row['nombre'] if name_row else 'Producto'
+        return False, f'"{name}" no tiene stock suficiente. Disponible: {stock}'
+    return True, None
+
+
 def placeholder():
     return '?'
 
@@ -119,7 +137,8 @@ def map_product_row(row):
         'category': row['categoria'] or 'General',
         'price': float(row['precio_venta']),
         'image_url': row['ruta_imagen'] or 'placeholder.png',
-        'description': row['descripcion'] or ''
+        'description': row['descripcion'] or '',
+        'stock': row['stock'] if 'stock' in row else 0
     }
 
 
@@ -168,9 +187,11 @@ def fetch_product_by_id(product_id):
     conn = get_shared_db()
     row = conn.execute(
         'SELECT p.id_producto, p.nombre, p.descripcion, p.precio_venta, c.nombre AS categoria, '
-        'COALESCE((SELECT ruta_imagen FROM imagenes_productos ip WHERE ip.id_producto = p.id_producto ORDER BY ip.id_imagen LIMIT 1), ?) AS ruta_imagen '
+        'COALESCE((SELECT ruta_imagen FROM imagenes_productos ip WHERE ip.id_producto = p.id_producto ORDER BY ip.id_imagen LIMIT 1), ?) AS ruta_imagen, '
+        'IFNULL(i.stock_actual, 0) AS stock '
         'FROM productos p '
         'LEFT JOIN categorias c ON p.id_categoria = c.id_categoria '
+        'LEFT JOIN inventario i ON i.id_producto = p.id_producto '
         'WHERE p.activo = 1 AND p.id_producto = ? ',
         ['placeholder.png', product_id]
     ).fetchone()
@@ -668,6 +689,12 @@ def api_add_to_cart():
     if not p:
         return jsonify({'mensaje': 'Producto no encontrado.'}), 404
 
+    conn = get_shared_db()
+    valid, msg = validate_stock(conn, product_id, quantity)
+    conn.close()
+    if not valid:
+        return jsonify({'mensaje': msg}), 400
+
     cart = load_cart_from_db() if 'user_id' in session else session.get('cart', [])
     if not isinstance(cart, list):
         cart = []
@@ -719,6 +746,17 @@ def api_checkout():
 
     conn = get_shared_db()
     ensure_order_statuses(conn)
+
+    # Validar stock antes de continuar
+    for item in cart_items:
+        product_id = item.get('id')
+        if product_id and product_id != 0:
+            cantidad = max(1, int(item.get('quantity', 1)))
+            valid, msg = validate_stock(conn, product_id, cantidad)
+            if not valid:
+                conn.close()
+                return jsonify({'mensaje': msg}), 400
+
     cliente_id = get_or_create_client(conn, user_email, user_name, address)
     status = conn.execute('SELECT id_estado FROM estados_pedido WHERE nombre = ? LIMIT 1', ('Pendiente',)).fetchone()
     status_id = status['id_estado'] if status else 1
@@ -824,6 +862,16 @@ def admin_create_invoice():
         return jsonify({'message': 'Cliente y artículos son requeridos.'}), 400
 
     conn = get_shared_db()
+
+    for item in items:
+        pid = item.get('id')
+        if pid:
+            qty = int(item.get('quantity', 1))
+            valid, msg = validate_stock(conn, pid, qty)
+            if not valid:
+                conn.close()
+                return jsonify({'message': msg}), 400
+
     total = sum(float(item.get('price', 0)) * int(item.get('quantity', 1)) for item in items)
     cursor = conn.execute(
         'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
@@ -1203,14 +1251,29 @@ try:
 except Exception:
     total = 0
 
+# Migrar categorías: insertar las 7 estándar + Personalizado
+all_categories = CATEGORIES + ['Personalizado']
+for cat_name in all_categories:
+    existing = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', (cat_name,)).fetchone()
+    if not existing:
+        conn.execute('INSERT INTO categorias (nombre) VALUES (?)', (cat_name,))
+
+# Reasignar productos con categorías antiguas a 'camisas' y eliminar las viejas
+old_cats = conn.execute(
+    'SELECT id_categoria, nombre FROM categorias WHERE nombre NOT IN ({})'.format(
+        ','.join('?' for _ in all_categories)
+    ), all_categories
+).fetchall()
+if old_cats:
+    default_cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('camisas',)).fetchone()
+    default_id = default_cat['id_categoria']
+    for old in old_cats:
+        conn.execute('UPDATE productos SET id_categoria = ? WHERE id_categoria = ?', (default_id, old['id_categoria']))
+        conn.execute('DELETE FROM categorias WHERE id_categoria = ?', (old['id_categoria']))
+
 if total == 0:
-    # Crear categoría 'Taza' si no existe
-    cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('Taza',)).fetchone()
-    if cat:
-        cat_id = cat['id_categoria']
-    else:
-        cur = conn.execute('INSERT INTO categorias (nombre) VALUES (?)', ('Taza',))
-        cat_id = cur.lastrowid
+    taza_cat = conn.execute('SELECT id_categoria FROM categorias WHERE nombre = ? LIMIT 1', ('tazas',)).fetchone()
+    cat_id = taza_cat['id_categoria']
 
     sample_products = [
         ('Taza Baki', 'Taza Baki personalizada', 15.00, 'taza baki.jpeg'),
@@ -1259,9 +1322,10 @@ def catalogo():
     
     # Obtener categorías para el filtro
     conn = get_shared_db()
-    categorias = conn.execute('SELECT nombre FROM categorias ORDER BY nombre').fetchall()
+    db_cats = {row['nombre'] for row in conn.execute('SELECT nombre FROM categorias').fetchall()}
     conn.close()
-    categorias_list = [row['nombre'] for row in categorias]
+    order = CATEGORIES + ['Personalizado']
+    categorias_list = [c for c in order if c in db_cats]
     
     cart_count = len(load_cart_from_db()) if 'user_id' in session else len(session.get('cart', []))
     return render_template('catalogo.html', productos=productos, categorias=categorias_list, cart_count=cart_count)
@@ -1452,6 +1516,17 @@ def checkout():
 
         conn = get_shared_db()
         ensure_order_statuses(conn)
+
+        # Validar stock antes de continuar
+        for item in cart:
+            product_id = item.get('id')
+            if product_id:
+                valid, msg = validate_stock(conn, product_id, item.get('quantity', 1))
+                if not valid:
+                    conn.close()
+                    flash(msg, 'error')
+                    return redirect(url_for('carrito'))
+
         cliente_id = get_or_create_client(conn, session.get('user_email'), name, address, telefono, cedula)
         status = conn.execute('SELECT id_estado FROM estados_pedido WHERE nombre = ? LIMIT 1', ('Pendiente',)).fetchone()
         status_id = status['id_estado'] if status else 1

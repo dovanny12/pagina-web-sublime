@@ -2027,7 +2027,159 @@ document
 .getElementById('downloadInvoiceBtn')
 .addEventListener('click',()=>{
 
-    window.print();
+    const invoice = {
+        number: document.getElementById('invoiceNumber').textContent,
+        client: document.getElementById('invoiceClient').textContent,
+        date: document.getElementById('invoiceDate').textContent,
+        total: document.getElementById('invoiceTotal').textContent,
+        items: []
+    };
+    document.querySelectorAll('#invoiceItems tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length === 4) {
+            invoice.items.push({
+                producto: tds[0].textContent,
+                cantidad: tds[1].textContent,
+                precio: tds[2].textContent,
+                total: tds[3].textContent
+            });
+        }
+    });
+
+    let html = `
+    <html>
+    <head><title>${invoice.number} - Sublime</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; padding: 40px; color: #1a1a2e; }
+        .header { display: flex; justify-content: space-between; align-items: start; border-bottom: 2px solid #1a1a2e; padding-bottom: 20px; margin-bottom: 30px; }
+        .brand { font-size: 2rem; font-weight: 900; letter-spacing: 3px; }
+        .brand small { font-size: 0.8rem; font-weight: 400; color: #888; }
+        .title { text-align: right; }
+        .title h1 { font-size: 1.8rem; margin: 0; }
+        .title p { font-size: 1rem; color: #888; }
+        .info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+        .info h3 { font-size: 0.85rem; color: #888; margin-bottom: 5px; }
+        .info p { font-size: 1rem; font-weight: 600; margin: 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        th { background: #1a1a2e; color: #fff; padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #eee; }
+        .total { text-align: right; font-size: 1.3rem; font-weight: 900; margin-top: 20px; }
+        .footer { margin-top: 40px; color: #888; font-size: 0.85rem; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; }
+    </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="brand">SUBLIME <small>Sistema de Ventas</small></div>
+            <div class="title">
+                <h1>FACTURA</h1>
+                <p>${invoice.number}</p>
+            </div>
+        </div>
+        <div class="info">
+            <div><h3>Facturado a:</h3><p>${invoice.client}</p></div>
+            <div><h3>Fecha:</h3><p>${invoice.date}</p></div>
+        </div>
+        <table>
+            <thead>
+                <tr><th>Producto</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+                ${invoice.items.map(item => `
+                    <tr><td>${item.producto}</td><td>${item.cantidad}</td><td>${item.precio}</td><td>${item.total}</td></tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <div class="total">Total: ${invoice.total}</div>
+        <div class="footer">Documento generado el ${new Date().toLocaleString('es-VE')}</div>
+    </body>
+    </html>
+    `;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+
+});
+
+document
+.getElementById('printInvoiceBtn')
+.addEventListener('click',()=>{
+
+    const invoice = {
+        number: document.getElementById('invoiceNumber').textContent,
+        client: document.getElementById('invoiceClient').textContent,
+        date: document.getElementById('invoiceDate').textContent,
+        total: document.getElementById('invoiceTotal').textContent,
+        items: []
+    };
+    document.querySelectorAll('#invoiceItems tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length === 4) {
+            invoice.items.push({
+                producto: tds[0].textContent,
+                cantidad: tds[1].textContent,
+                precio: tds[2].textContent,
+                total: tds[3].textContent
+            });
+        }
+    });
+
+    let html = `
+    <html>
+    <head><title>${invoice.number} - Sublime</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; padding: 40px; color: #1a1a2e; }
+        .header { display: flex; justify-content: space-between; align-items: start; border-bottom: 2px solid #1a1a2e; padding-bottom: 20px; margin-bottom: 30px; }
+        .brand { font-size: 2rem; font-weight: 900; letter-spacing: 3px; }
+        .brand small { font-size: 0.8rem; font-weight: 400; color: #888; }
+        .title { text-align: right; }
+        .title h1 { font-size: 1.8rem; margin: 0; }
+        .title p { font-size: 1rem; color: #888; }
+        .info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+        .info h3 { font-size: 0.85rem; color: #888; margin-bottom: 5px; }
+        .info p { font-size: 1rem; font-weight: 600; margin: 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        th { background: #1a1a2e; color: #fff; padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #eee; }
+        .total { text-align: right; font-size: 1.3rem; font-weight: 900; margin-top: 20px; }
+        .footer { margin-top: 40px; color: #888; font-size: 0.85rem; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; }
+        @media print { body { padding: 0; } .footer { position: fixed; bottom: 0; width: 100%; } }
+        @page { margin: 15mm; }
+    </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="brand">SUBLIME <small>Sistema de Ventas</small></div>
+            <div class="title">
+                <h1>FACTURA</h1>
+                <p>${invoice.number}</p>
+            </div>
+        </div>
+        <div class="info">
+            <div><h3>Facturado a:</h3><p>${invoice.client}</p></div>
+            <div><h3>Fecha:</h3><p>${invoice.date}</p></div>
+        </div>
+        <table>
+            <thead>
+                <tr><th>Producto</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+                ${invoice.items.map(item => `
+                    <tr><td>${item.producto}</td><td>${item.cantidad}</td><td>${item.precio}</td><td>${item.total}</td></tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <div class="total">Total: ${invoice.total}</div>
+        <div class="footer">Documento generado el ${new Date().toLocaleString('es-VE')}</div>
+    </body>
+    </html>
+    `;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+
+    setTimeout(() => { win.print(); }, 500);
 
 });
 

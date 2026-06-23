@@ -757,6 +757,71 @@ def api_checkout():
     return jsonify({'mensaje': 'Checkout completado correctamente.', 'order_id': pedido_id, 'total': total}), 201
 
 
+# ADMIN PANEL - CARRITO POR CLIENTE
+@app.route('/api/admin/cart/<int:cliente_id>', methods=['GET'])
+def admin_get_cart(cliente_id):
+    conn = get_shared_db()
+    carrito_id = get_or_create_cart(conn, cliente_id)
+    items = conn.execute(
+        'SELECT dc.id_detalle, dc.id_producto, dc.cantidad, dc.precio_unitario, p.nombre AS name '
+        'FROM detalle_carrito dc '
+        'LEFT JOIN productos p ON dc.id_producto = p.id_producto '
+        'WHERE dc.id_carrito = ? ORDER BY dc.id_detalle ASC',
+        (carrito_id,)
+    ).fetchall()
+    conn.close()
+    cart = [{
+        'id': item['id_producto'],
+        'name': item['name'] or 'Producto personalizado',
+        'price': float(item['precio_unitario']),
+        'quantity': item['cantidad']
+    } for item in items]
+    return jsonify({'cart': cart})
+
+
+@app.route('/api/admin/cart/<int:cliente_id>', methods=['POST'])
+def admin_save_cart(cliente_id):
+    data = request.get_json() or {}
+    items = data.get('items', [])
+    conn = get_shared_db()
+    carrito_id = get_or_create_cart(conn, cliente_id)
+    conn.execute('DELETE FROM detalle_carrito WHERE id_carrito = ?', (carrito_id,))
+    for item in items:
+        conn.execute(
+            'INSERT INTO detalle_carrito (id_carrito, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (carrito_id, item.get('id'), item.get('quantity', 1), item.get('price', 0))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Carrito actualizado correctamente.'})
+
+
+@app.route('/api/admin/invoice/create', methods=['POST'])
+def admin_create_invoice():
+    data = request.get_json() or {}
+    cliente_id = data.get('cliente_id')
+    items = data.get('items', [])
+
+    if not cliente_id or not items:
+        return jsonify({'message': 'Cliente y artículos son requeridos.'}), 400
+
+    conn = get_shared_db()
+    total = sum(float(item.get('price', 0)) * int(item.get('quantity', 1)) for item in items)
+    cursor = conn.execute(
+        'INSERT INTO ventas (id_cliente, total) VALUES (?, ?)',
+        (cliente_id, total)
+    )
+    venta_id = cursor.lastrowid
+    for item in items:
+        conn.execute(
+            'INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario) VALUES (?, ?, ?, ?)',
+            (venta_id, item.get('id'), item.get('quantity', 1), item.get('price', 0))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Factura creada correctamente.', 'invoice_id': venta_id}), 201
+
+
 # ADMIN PANEL STATIC FILES Y ENDPOINTS
 @app.route('/admin-panel/')
 def admin_panel_index():

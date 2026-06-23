@@ -210,11 +210,20 @@
                 <div class="box cart-box">
 
                     <h3>Carrito</h3>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;" id="cartClientLabel">Seleccione un cliente</div>
 
                     <div id="cartContent">
-                        <p>
-                            Seleccione un producto para agregar al carrito.
-                        </p>
+                        <p>Seleccione un producto para agregar al carrito.</p>
+                    </div>
+
+                    <div id="cartFooter" style="display:none; margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 1.1rem; font-weight: 700; margin-bottom: 15px;">
+                            <span>Total:</span>
+                            <span id="cartTotal">Bs 0,00</span>
+                        </div>
+                        <button type="button" class="btn-primary" id="generateInvoiceBtn" style="width:100%; padding: 12px; border-radius: 10px; font-weight: 700;">
+                            Generar Factura
+                        </button>
                     </div>
 
                 </div>

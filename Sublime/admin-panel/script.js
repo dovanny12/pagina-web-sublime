@@ -689,6 +689,10 @@ async function loadSalesData() {
 
             });
 
+        clientSelect.addEventListener('change', () => {
+            loadClientCart();
+        });
+
     } catch (error) {
 
         showToast(
@@ -701,65 +705,175 @@ async function loadSalesData() {
 }
 
 /* =========================
-   CARRITO
+   CARRITO POR CLIENTE
 ========================= */
+
+let currentClientId = null;
+
+async function loadClientCart() {
+    const clientSelect = document.getElementById('salesClientSelect');
+    const clientId = clientSelect.value;
+    const label = document.getElementById('cartClientLabel');
+
+    if (!clientId) {
+        currentClientId = null;
+        cart = [];
+        renderCart();
+        label.textContent = 'Seleccione un cliente';
+        return;
+    }
+
+    currentClientId = clientId;
+    const option = clientSelect.options[clientSelect.selectedIndex];
+    label.textContent = `Cliente: ${option.text}`;
+
+    try {
+        const response = await apiRequest(`admin/cart/${clientId}`);
+        cart = response.cart.map(item => ({
+            id: item.id,
+            nombre: item.name,
+            precio: item.price,
+            cantidad: item.quantity
+        }));
+        renderCart();
+    } catch (error) {
+        showToast('Error cargando carrito del cliente.', 'error');
+    }
+}
+
+async function saveCartToServer() {
+    if (!currentClientId) return;
+    try {
+        await apiRequest(`admin/cart/${currentClientId}`, {
+            method: 'POST',
+            body: {
+                items: cart.map(item => ({
+                    id: item.id,
+                    quantity: item.cantidad,
+                    price: item.precio
+                }))
+            }
+        });
+    } catch (error) {
+        showToast('Error guardando carrito.', 'error');
+    }
+}
 
 function addToCart(product) {
 
-    const existing = cart.find(
-        item => item.id === product.id
-    );
+    if (!currentClientId) {
+        showToast('Seleccione un cliente primero.', 'error');
+        return;
+    }
+
+    const existing = cart.find(item => item.id === product.id);
 
     if (existing) {
-
         existing.cantidad += 1;
-
     } else {
-
         cart.push({
             ...product,
             cantidad: 1
         });
-
     }
 
     renderCart();
+    saveCartToServer();
+}
 
+function updateQuantity(id, delta) {
+    const item = cart.find(i => i.id == id);
+    if (!item) return;
+    item.cantidad = Math.max(1, item.cantidad + delta);
+    renderCart();
+    saveCartToServer();
+}
+
+function removeFromCart(id) {
+    cart = cart.filter(i => i.id != id);
+    renderCart();
+    saveCartToServer();
 }
 
 function renderCart() {
 
-    const cartContent =
-        document.getElementById('cartContent');
+    const cartContent = document.getElementById('cartContent');
+    const cartFooter = document.getElementById('cartFooter');
 
     if (!cartContent) return;
 
     if (!cart.length) {
-
-        cartContent.innerHTML =
-            '<p>Carrito vacío</p>';
-
+        cartContent.innerHTML = '<p>Carrito vacío</p>';
+        if (cartFooter) cartFooter.style.display = 'none';
         return;
-
     }
+
+    const total = cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0);
 
     cartContent.innerHTML = cart.map(item => `
 
-        <div class="cart-item">
+        <div class="cart-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border-color);">
 
-            <strong>${item.nombre}</strong>
+            <div style="flex:1;">
+                <strong>${item.nombre}</strong>
+                <div style="font-size:0.85rem; color:var(--text-muted);">${formatCurrency(item.precio)} c/u</div>
+            </div>
 
-            <p>
-                Cantidad: ${item.cantidad}
-                •
-                ${formatCurrency(item.precio)} c/u
-            </p>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <button type="button" class="btn-qty" onclick="updateQuantity(${item.id}, -1)" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border-color);background:transparent;cursor:pointer;font-weight:700;">−</button>
+                <span style="min-width:20px;text-align:center;font-weight:700;">${item.cantidad}</span>
+                <button type="button" class="btn-qty" onclick="updateQuantity(${item.id}, 1)" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border-color);background:transparent;cursor:pointer;font-weight:700;">+</button>
+                <button type="button" onclick="removeFromCart(${item.id})" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:1.1rem;" title="Eliminar">✕</button>
+            </div>
 
         </div>
 
     `).join('');
 
+    document.getElementById('cartTotal').textContent = formatCurrency(total);
+
+    if (cartFooter) cartFooter.style.display = 'block';
+
 }
+
+/* =========================
+   GENERAR FACTURA
+========================= */
+
+document.addEventListener('click', async (e) => {
+    if (e.target.id === 'generateInvoiceBtn') {
+        if (!currentClientId || !cart.length) {
+            showToast('Seleccione un cliente y agregue productos.', 'error');
+            return;
+        }
+
+        if (!confirm('¿Generar factura para este cliente?')) return;
+
+        try {
+            const response = await apiRequest('admin/invoice/create', {
+                method: 'POST',
+                body: {
+                    cliente_id: Number(currentClientId),
+                    items: cart.map(item => ({
+                        id: item.id,
+                        quantity: item.cantidad,
+                        price: item.precio
+                    }))
+                }
+            });
+
+            cart = [];
+            renderCart();
+            await Promise.all([
+                loadInvoices(),
+                loadDashboard()
+            ]);
+            showToast(`Factura INV-${String(response.invoice_id).padStart(3, '0')} creada.`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+});
 
 /* =========================
    INICIO
